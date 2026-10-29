@@ -11,9 +11,12 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +50,7 @@ private const val PLAYER_SIZE = 52f
 private const val PLAYER_MARGIN = 24f
 private const val PLAYER_SPEED = 320f
 
+private enum class Screen { LOBBY, SETTINGS, GAME, GAME_OVER }
 private enum class GamePhase { READY, PLAYING, PAUSED, GAME_OVER }
 private enum class PickupType { SHIELD, SLOW, MAGNET }
 
@@ -83,14 +87,229 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             PixelDodgeTheme {
-                PixelDodgeGame()
+                GameApp()
             }
         }
     }
 }
 
 @Composable
-fun PixelDodgeGame() {
+fun GameApp() {
+    var screen by remember { mutableStateOf(Screen.LOBBY) }
+    var soundEnabled by remember { mutableStateOf(true) }
+    var vibrationEnabled by remember { mutableStateOf(true) }
+    var difficulty by remember { mutableIntStateOf(1) }
+
+    when (screen) {
+        Screen.LOBBY -> LobbyScreen(
+            onPlay = { screen = Screen.GAME },
+            onSettings = { screen = Screen.SETTINGS },
+            bestScore = 0,
+            difficulty = difficulty,
+        )
+        Screen.SETTINGS -> SettingsScreen(
+            soundEnabled = soundEnabled,
+            vibrationEnabled = vibrationEnabled,
+            difficulty = difficulty,
+            onSoundChanged = { soundEnabled = it },
+            onVibrationChanged = { vibrationEnabled = it },
+            onDifficultyChanged = { difficulty = it },
+            onBack = { screen = Screen.LOBBY },
+        )
+        Screen.GAME -> {
+            PixelDodgeGame(
+                onQuit = { screen = Screen.LOBBY },
+                soundEnabled = soundEnabled,
+                difficulty = difficulty,
+            )
+        }
+        Screen.GAME_OVER -> LobbyScreen(
+            onPlay = { screen = Screen.GAME },
+            onSettings = { screen = Screen.SETTINGS },
+            bestScore = 0,
+            difficulty = difficulty,
+        )
+    }
+}
+
+@Composable
+fun LobbyScreen(
+    onPlay: () -> Unit,
+    onSettings: () -> Unit,
+    bestScore: Int,
+    difficulty: Int,
+) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xFF090B1A)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(Color(0xFF090B1A), size = size)
+
+            val grid = 24f
+            for (x in 0..((size.width / grid).toInt() + 1)) {
+                for (y in 0..((size.height / grid).toInt() + 1)) {
+                    val color = if ((x + y) % 2 == 0) Color(0xFF10192E) else Color(0xFF0B1324)
+                    drawRect(color = color, topLeft = Offset(x * grid, y * grid), size = Size(grid, grid))
+                }
+            }
+
+            drawRoundRect(
+                color = Color(0xFF7BE0FF),
+                topLeft = Offset(size.width / 2 - 160f, size.height / 2 - 170f),
+                size = Size(320f, 180f),
+                cornerRadius = CornerRadius(16f),
+                style = Stroke(width = 4f),
+            )
+        }
+
+        Surface(
+            color = Color(0xCC111B32),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.padding(24.dp),
+        ) {
+            Box(
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 22.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "PIXEL DODGE\nMira: Last Signal",
+                    color = Color(0xFFEAF6FF),
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+
+                Text(
+                    text = "Best score: $bestScore\nDifficulty: ${if (difficulty == 1) "Normal" else if (difficulty == 2) "Hard" else "Nightmare"}",
+                    color = Color(0xFF7BE0FF),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(top = 88.dp),
+                )
+
+                Button(
+                    onClick = onPlay,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF7BE0FF),
+                        contentColor = Color(0xFF081827),
+                    ),
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(top = 110.dp),
+                ) {
+                    Text("PLAY")
+                }
+
+                Button(
+                    onClick = onSettings,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF111B32),
+                        contentColor = Color(0xFFEAF6FF),
+                    ),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(top = 110.dp),
+                ) {
+                    Text("SETTINGS")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsScreen(
+    soundEnabled: Boolean,
+    vibrationEnabled: Boolean,
+    difficulty: Int,
+    onSoundChanged: (Boolean) -> Unit,
+    onVibrationChanged: (Boolean) -> Unit,
+    onDifficultyChanged: (Int) -> Unit,
+    onBack: () -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xFF090B1A)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            color = Color(0xFF111B32),
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.padding(24.dp),
+        ) {
+            Box(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    text = "SETTINGS",
+                    color = Color(0xFFEAF6FF),
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+
+                Box(
+                    modifier = Modifier.align(Alignment.Center).padding(top = 20.dp),
+                ) {
+                    Text(
+                        text = "Sound",
+                        color = Color(0xFFEAF6FF),
+                        fontSize = 18.sp,
+                        modifier = Modifier.align(Alignment.CenterStart),
+                    )
+                    Switch(
+                        checked = soundEnabled,
+                        onCheckedChange = onSoundChanged,
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                    )
+
+                    Text(
+                        text = "Vibration",
+                        color = Color(0xFFEAF6FF),
+                        fontSize = 18.sp,
+                        modifier = Modifier.align(Alignment.CenterStart).padding(top = 52.dp),
+                    )
+                    Switch(
+                        checked = vibrationEnabled,
+                        onCheckedChange = onVibrationChanged,
+                        modifier = Modifier.align(Alignment.CenterEnd).padding(top = 52.dp),
+                    )
+
+                    Text(
+                        text = "Difficulty",
+                        color = Color(0xFFEAF6FF),
+                        fontSize = 18.sp,
+                        modifier = Modifier.align(Alignment.CenterStart).padding(top = 104.dp),
+                    )
+
+                    val levels = listOf("Normal", "Hard", "Nightmare")
+                    Button(
+                        onClick = { onDifficultyChanged((difficulty % levels.size) + 1) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF7BE0FF),
+                            contentColor = Color(0xFF081827),
+                        ),
+                        modifier = Modifier.align(Alignment.CenterEnd).padding(top = 92.dp),
+                    ) {
+                        Text(levels[(difficulty - 1).coerceIn(0, levels.size - 1)])
+                    }
+                }
+
+                Button(
+                    onClick = onBack,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF111B32),
+                        contentColor = Color(0xFFEAF6FF),
+                    ),
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                ) {
+                    Text("BACK")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PixelDodgeGame(
+    onQuit: () -> Unit,
+    soundEnabled: Boolean,
+    difficulty: Int,
+) {
     val storyLines = listOf(
         "The Last Signal\nA rogue machine storm is swallowing the neon city.",
         "You are Mira, a courier with one final job: protect the signal core.",
@@ -118,6 +337,12 @@ fun PixelDodgeGame() {
     var combo by remember { mutableIntStateOf(1) }
     var wave by remember { mutableIntStateOf(1) }
     var storyIndex by remember { mutableIntStateOf(0) }
+
+    val difficultyMultiplier = when (difficulty) {
+        1 -> 1f
+        2 -> 1.25f
+        else -> 1.5f
+    }
 
     val resetGame: () -> Unit = {
         enemies = emptyList()
@@ -163,7 +388,7 @@ fun PixelDodgeGame() {
 
         while (phase == GamePhase.PLAYING) {
             delay(16)
-            val dt = 0.016f
+            val dt = 0.016f * difficultyMultiplier
             val slowFactor = if (slowTime > 0f) 0.6f else 1f
 
             elapsed += dt * slowFactor
@@ -189,7 +414,7 @@ fun PixelDodgeGame() {
                 }
 
                 val targetX = Random.nextFloat() * (gameWidth - size)
-                val speed = (150f + elapsed * 12f + wave * 15f) * slowFactor
+                val speed = (150f + elapsed * 12f + wave * 15f) * slowFactor * difficultyMultiplier
                 enemies = enemies + Enemy(
                     x = startX,
                     y = -size,
@@ -518,6 +743,19 @@ fun PixelDodgeGame() {
             Text(text = if (phase == GamePhase.PAUSED) "RESUME" else "PAUSE")
         }
 
+        Button(
+            onClick = onQuit,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF111B32),
+                contentColor = Color(0xFFEAF6FF),
+            ),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 18.dp, top = 18.dp),
+        ) {
+            Text("QUIT")
+        }
+
         if (shieldTime > 0f) {
             Text(
                 text = "SHIELD ${"%.1f".format(shieldTime)}s",
@@ -526,7 +764,7 @@ fun PixelDodgeGame() {
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 22.dp, end = 18.dp),
+                    .padding(top = 60.dp, end = 18.dp),
             )
         }
 
@@ -538,7 +776,7 @@ fun PixelDodgeGame() {
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 52.dp, end = 18.dp),
+                    .padding(top = 90.dp, end = 18.dp),
             )
         }
 
@@ -550,7 +788,7 @@ fun PixelDodgeGame() {
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 82.dp, end = 18.dp),
+                    .padding(top = 120.dp, end = 18.dp),
             )
         }
 
