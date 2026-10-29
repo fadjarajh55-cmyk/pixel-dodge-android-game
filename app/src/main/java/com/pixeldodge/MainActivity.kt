@@ -31,7 +31,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -92,6 +91,13 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun PixelDodgeGame() {
+    val storyLines = listOf(
+        "The Last Signal\nA rogue machine storm is swallowing the neon city.",
+        "You are Mira, a courier with one final job: protect the signal core.",
+        "Every drone you dodge is a piece of the broken future trying to erase you.",
+        "Hold the line, grab power cells, and reach the dawn gate."
+    )
+
     var phase by remember { mutableStateOf(GamePhase.READY) }
     var playerX by remember { mutableFloatStateOf(0f) }
     var playerY by remember { mutableFloatStateOf(0f) }
@@ -111,6 +117,7 @@ fun PixelDodgeGame() {
     var pulse by remember { mutableFloatStateOf(0f) }
     var combo by remember { mutableIntStateOf(1) }
     var wave by remember { mutableIntStateOf(1) }
+    var storyIndex by remember { mutableIntStateOf(0) }
 
     val resetGame: () -> Unit = {
         enemies = emptyList()
@@ -125,6 +132,7 @@ fun PixelDodgeGame() {
         pulse = 0f
         combo = 1
         wave = 1
+        storyIndex = 0
         score = 0
         if (gameWidth > 0f) {
             playerX = (gameWidth / 2f) - PLAYER_SIZE / 2f
@@ -180,12 +188,7 @@ fun PixelDodgeGame() {
                     else -> gameWidth + size
                 }
 
-                val targetX = if (startX < 0f || startX > gameWidth) {
-                    Random.nextFloat() * (gameWidth - size)
-                } else {
-                    Random.nextFloat() * (gameWidth - size)
-                }
-
+                val targetX = Random.nextFloat() * (gameWidth - size)
                 val speed = (150f + elapsed * 12f + wave * 15f) * slowFactor
                 enemies = enemies + Enemy(
                     x = startX,
@@ -568,21 +571,29 @@ fun PixelDodgeGame() {
                                 .padding(horizontal = 26.dp, vertical = 20.dp),
                             contentAlignment = Alignment.Center,
                         ) {
+                            val message = when (phase) {
+                                GamePhase.READY -> storyLines[storyIndex % storyLines.size]
+                                GamePhase.PAUSED -> "PAUSED\nThe city is still shaking..."
+                                else -> "GAME OVER\nMira fell before dawn.\nScore: $score\nBest: $bestScore\nCombo x$combo"
+                            }
+
                             Text(
-                                text = when (phase) {
-                                    GamePhase.READY -> "PIXEL DODGE\nTap or drag to start"
-                                    GamePhase.PAUSED -> "PAUSED\nTap resume or press button"
-                                    else -> "GAME OVER\nScore: $score\nBest: $bestScore\nCombo x$combo"
-                                },
+                                text = message,
                                 color = Color(0xFFEAF6FF),
                                 fontSize = 24.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(bottom = 56.dp),
+                                modifier = Modifier.padding(bottom = 62.dp),
                             )
 
                             Button(
                                 onClick = {
-                                    if (phase == GamePhase.READY || phase == GamePhase.GAME_OVER) {
+                                    if (phase == GamePhase.READY) {
+                                        storyIndex = (storyIndex + 1) % storyLines.size
+                                        if (storyIndex == 0) {
+                                            resetGame()
+                                            phase = GamePhase.PLAYING
+                                        }
+                                    } else if (phase == GamePhase.GAME_OVER) {
                                         resetGame()
                                         phase = GamePhase.PLAYING
                                     } else if (phase == GamePhase.PAUSED) {
@@ -597,7 +608,7 @@ fun PixelDodgeGame() {
                             ) {
                                 Text(
                                     text = when (phase) {
-                                        GamePhase.READY -> "START"
+                                        GamePhase.READY -> if (storyIndex < storyLines.size - 1) "NEXT" else "START RUN"
                                         GamePhase.PAUSED -> "RESUME"
                                         else -> "PLAY AGAIN"
                                     },
