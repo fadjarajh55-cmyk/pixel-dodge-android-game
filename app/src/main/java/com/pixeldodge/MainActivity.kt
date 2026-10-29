@@ -6,7 +6,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -41,13 +40,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pixeldodge.ui.theme.PixelDodgeTheme
 import kotlinx.coroutines.delay
-import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.random.Random
 
 private const val PLAYER_SIZE = 52f
 private const val PLAYER_MARGIN = 24f
+private const val PLAYER_SPEED = 320f
+
+private enum class GamePhase { READY, PLAYING, PAUSED, GAME_OVER }
+private enum class PickupType { SHIELD, SLOW, MAGNET }
 
 private data class Enemy(
     val x: Float,
@@ -55,6 +57,8 @@ private data class Enemy(
     val size: Float,
     val speed: Float,
     val drift: Float,
+    val targetX: Float,
+    val wobble: Float,
 )
 
 private data class Pickup(
@@ -62,9 +66,17 @@ private data class Pickup(
     val y: Float,
     val size: Float,
     val speed: Float,
+    val type: PickupType,
 )
 
-private enum class GamePhase { READY, PLAYING, GAME_OVER }
+private data class Particle(
+    val x: Float,
+    val y: Float,
+    val vx: Float,
+    val vy: Float,
+    val life: Float,
+    val color: Color,
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,20 +101,30 @@ fun PixelDodgeGame() {
     var gameHeight by remember { mutableFloatStateOf(0f) }
     var enemies by remember { mutableStateOf(emptyList<Enemy>()) }
     var pickups by remember { mutableStateOf(emptyList<Pickup>()) }
-    var spawnTimer by remember { mutableFloatStateOf(0.6f) }
-    var pickupTimer by remember { mutableFloatStateOf(3.0f) }
+    var particles by remember { mutableStateOf(emptyList<Particle>()) }
+    var spawnTimer by remember { mutableFloatStateOf(0.8f) }
+    var pickupTimer by remember { mutableFloatStateOf(3.2f) }
     var elapsed by remember { mutableFloatStateOf(0f) }
     var shieldTime by remember { mutableFloatStateOf(0f) }
+    var slowTime by remember { mutableFloatStateOf(0f) }
+    var magnetTime by remember { mutableFloatStateOf(0f) }
     var pulse by remember { mutableFloatStateOf(0f) }
+    var combo by remember { mutableIntStateOf(1) }
+    var wave by remember { mutableIntStateOf(1) }
 
     val resetGame: () -> Unit = {
         enemies = emptyList()
         pickups = emptyList()
-        spawnTimer = 0.7f
-        pickupTimer = 3.5f
+        particles = emptyList()
+        spawnTimer = 0.8f
+        pickupTimer = 3.2f
         elapsed = 0f
         shieldTime = 0f
+        slowTime = 0f
+        magnetTime = 0f
         pulse = 0f
+        combo = 1
+        wave = 1
         score = 0
         if (gameWidth > 0f) {
             playerX = (gameWidth / 2f) - PLAYER_SIZE / 2f
@@ -112,51 +134,129 @@ fun PixelDodgeGame() {
         }
     }
 
+    val addParticles: (Float, Float, Color, Int) -> Unit = { cx, cy, color, count ->
+        val newParticles = (0 until count).map {
+            val angle = Random.nextFloat() * (Math.PI * 2).toFloat()
+            val speed = 20f + Random.nextFloat() * 80f
+            Particle(
+                x = cx,
+                y = cy,
+                vx = (kotlin.math.cos(angle.toDouble()) * speed).toFloat(),
+                vy = (kotlin.math.sin(angle.toDouble()) * speed).toFloat(),
+                life = 0.7f + Random.nextFloat() * 0.7f,
+                color = color,
+            )
+        }
+        particles = particles + newParticles
+    }
+
     LaunchedEffect(phase) {
         if (phase != GamePhase.PLAYING) return@LaunchedEffect
+
         while (phase == GamePhase.PLAYING) {
             delay(16)
-            elapsed += 0.016f
-            score = (elapsed * 18).toInt()
-            bestScore = maxOf(bestScore, score)
-            shieldTime = (shieldTime - 0.016f).coerceAtLeast(0f)
-            pulse = (pulse - 0.016f).coerceAtLeast(0f)
+            val dt = 0.016f
+            val slowFactor = if (slowTime > 0f) 0.6f else 1f
 
-            spawnTimer -= 0.016f
-            pickupTimer -= 0.016f
+            elapsed += dt * slowFactor
+            score = (elapsed * 22 + combo * 5).toInt()
+            bestScore = maxOf(bestScore, score)
+            wave = (elapsed / 8f).toInt() + 1
+            shieldTime = (shieldTime - dt).coerceAtLeast(0f)
+            slowTime = (slowTime - dt).coerceAtLeast(0f)
+            magnetTime = (magnetTime - dt).coerceAtLeast(0f)
+            pulse = (pulse - dt).coerceAtLeast(0f)
+
+            spawnTimer -= dt
+            pickupTimer -= dt
 
             if (spawnTimer <= 0f) {
-                val size = 28f + Random.nextFloat() * 26f
-                val enemyX = Random.nextFloat() * (gameWidth - size)
-                val speed = 170f + elapsed * 16f + Random.nextFloat() * 120f
+                val size = 24f + Random.nextFloat() * 30f
+                val lane = Random.nextInt(4)
+                val startX = when (lane) {
+                    0 -> -size
+                    1 -> gameWidth * 0.25f
+                    2 -> gameWidth * 0.75f
+                    else -> gameWidth + size
+                }
+
+                val targetX = if (startX < 0f || startX > gameWidth) {
+                    Random.nextFloat() * (gameWidth - size)
+                } else {
+                    Random.nextFloat() * (gameWidth - size)
+                }
+
+                val speed = (150f + elapsed * 12f + wave * 15f) * slowFactor
                 enemies = enemies + Enemy(
-                    x = enemyX,
+                    x = startX,
                     y = -size,
                     size = size,
                     speed = speed,
-                    drift = (Random.nextFloat() - 0.5f) * 80f,
+                    drift = (Random.nextFloat() - 0.5f) * 120f,
+                    targetX = targetX,
+                    wobble = Random.nextFloat() * 360f,
                 )
-                spawnTimer = (1.15f - min(elapsed / 40f, 0.55f)).coerceAtLeast(0.35f)
+                spawnTimer = (1.1f - min(elapsed / 35f, 0.45f)).coerceAtLeast(0.28f)
             }
 
             if (pickupTimer <= 0f) {
                 val size = 18f
                 val x = Random.nextFloat() * (gameWidth - size)
-                pickups = pickups + Pickup(x = x, y = -size, size = size, speed = 240f)
-                pickupTimer = 4.5f + Random.nextFloat() * 2.5f
+                val type = when (Random.nextInt(3)) {
+                    0 -> PickupType.SHIELD
+                    1 -> PickupType.SLOW
+                    else -> PickupType.MAGNET
+                }
+                pickups = pickups + Pickup(x = x, y = -size, size = size, speed = 240f, type = type)
+                pickupTimer = 4f + Random.nextFloat() * 3f
             }
 
             enemies = enemies
                 .map { enemy ->
-                    val nextX = (enemy.x + enemy.drift * 0.016f)
+                    val dx = enemy.targetX - enemy.x
+                    val adjusted = if (dx != 0f) dx.coerceIn(-80f, 80f) * 0.05f else 0f
+                    val nextX = (enemy.x + adjusted + enemy.drift * dt * 0.75f)
                         .coerceIn(0f, (gameWidth - enemy.size).coerceAtLeast(0f))
-                    enemy.copy(y = enemy.y + enemy.speed * 0.016f, x = nextX)
+                    enemy.copy(
+                        x = nextX,
+                        y = enemy.y + enemy.speed * dt,
+                        drift = enemy.drift + kotlin.math.sin((elapsed + enemy.wobble) * 4f) * 10f,
+                    )
+                }
+                .filter { it.y < gameHeight + it.size + 24f }
+
+            pickups = pickups
+                .map { pickup ->
+                    val magnetPull = if (magnetTime > 0f) {
+                        val px = pickup.x + pickup.size / 2f
+                        val py = pickup.y + pickup.size / 2f
+                        val playerCenterX = playerX + PLAYER_SIZE / 2f
+                        val playerCenterY = playerY + PLAYER_SIZE / 2f
+                        val dx = playerCenterX - px
+                        val dy = playerCenterY - py
+                        val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                        if (dist > 0f && dist < 180f) {
+                            val pull = 0.18f
+                            pickup.copy(
+                                x = pickup.x + dx / dist * pull * 60f,
+                                y = pickup.y + dy / dist * pull * 60f,
+                            )
+                        } else pickup
+                    } else pickup
+
+                    magnetPull.copy(y = magnetPull.y + magnetPull.speed * dt)
                 }
                 .filter { it.y < gameHeight + it.size + 20f }
 
-            pickups = pickups
-                .map { pickup -> pickup.copy(y = pickup.y + pickup.speed * 0.016f) }
-                .filter { it.y < gameHeight + it.size + 20f }
+            particles = particles
+                .map { particle ->
+                    particle.copy(
+                        x = particle.x + particle.vx * dt,
+                        y = particle.y + particle.vy * dt,
+                        life = particle.life - dt,
+                    )
+                }
+                .filter { it.life > 0f }
 
             val playerRect = Rect(
                 left = playerX,
@@ -175,10 +275,13 @@ fun PixelDodgeGame() {
                 )
                 if (enemyRect.overlaps(playerRect)) {
                     if (shieldTime > 0f) {
-                        pulse = 1f
+                        addParticles(enemy.x + enemy.size / 2f, enemy.y + enemy.size / 2f, Color(0xFF7BE0FF), 16)
+                        shieldTime = 0f
+                        combo += 1
                         continue
                     }
                     phase = GamePhase.GAME_OVER
+                    addParticles(playerX + PLAYER_SIZE / 2f, playerY + PLAYER_SIZE / 2f, Color(0xFFFF6B6B), 26)
                     break
                 }
                 survivingEnemies.add(enemy)
@@ -194,7 +297,21 @@ fun PixelDodgeGame() {
                     bottom = pickup.y + pickup.size,
                 )
                 if (pickupRect.overlaps(playerRect)) {
-                    shieldTime = 4f
+                    when (pickup.type) {
+                        PickupType.SHIELD -> {
+                            shieldTime = 4.5f
+                            addParticles(pickup.x + pickup.size / 2f, pickup.y + pickup.size / 2f, Color(0xFF82F1FF), 18)
+                        }
+                        PickupType.SLOW -> {
+                            slowTime = 3.5f
+                            addParticles(pickup.x + pickup.size / 2f, pickup.y + pickup.size / 2f, Color(0xFFFFD559), 18)
+                        }
+                        PickupType.MAGNET -> {
+                            magnetTime = 5f
+                            addParticles(pickup.x + pickup.size / 2f, pickup.y + pickup.size / 2f, Color(0xFF8EFEAC), 18)
+                        }
+                    }
+                    combo += 1
                     pulse = 1f
                 } else {
                     remainingPickups.add(pickup)
@@ -202,9 +319,7 @@ fun PixelDodgeGame() {
             }
             pickups = remainingPickups
 
-            if (phase == GamePhase.GAME_OVER) {
-                break
-            }
+            if (phase == GamePhase.GAME_OVER) break
         }
     }
 
@@ -237,14 +352,13 @@ fun PixelDodgeGame() {
                 }
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        if (phase == GamePhase.READY) {
+                        if (phase == GamePhase.READY || phase == GamePhase.GAME_OVER) {
                             resetGame()
                             phase = GamePhase.PLAYING
                             return@detectTapGestures
                         }
 
-                        if (phase == GamePhase.GAME_OVER) {
-                            resetGame()
+                        if (phase == GamePhase.PAUSED) {
                             phase = GamePhase.PLAYING
                             return@detectTapGestures
                         }
@@ -316,14 +430,19 @@ fun PixelDodgeGame() {
             )
 
             pickups.forEach { pickup ->
+                val fill = when (pickup.type) {
+                    PickupType.SHIELD -> Color(0xFF82F1FF)
+                    PickupType.SLOW -> Color(0xFFFFD559)
+                    PickupType.MAGNET -> Color(0xFF8EFEAC)
+                }
                 drawCircle(
-                    color = Color(0xFFFFD559),
+                    color = fill,
                     radius = pickup.size / 2f,
                     center = Offset(pickup.x + pickup.size / 2f, pickup.y + pickup.size / 2f),
                 )
                 drawCircle(
-                    color = Color(0xFFFFF4BB),
-                    radius = pickup.size / 3f,
+                    color = Color(0xFFFFFFFF),
+                    radius = pickup.size / 4f,
                     center = Offset(pickup.x + pickup.size / 2f, pickup.y + pickup.size / 2f),
                 )
             }
@@ -344,12 +463,27 @@ fun PixelDodgeGame() {
                 )
             }
 
+            particles.forEach { particle ->
+                drawCircle(
+                    color = particle.color.copy(alpha = (particle.life * 2f).coerceAtMost(1f)),
+                    radius = 3f + particle.life * 4f,
+                    center = Offset(particle.x, particle.y),
+                )
+            }
+
             if (pulse > 0f) {
                 drawCircle(
                     color = Color(0xFFFFFFFF).copy(alpha = pulse * 0.3f),
                     radius = PLAYER_SIZE * 1.3f + (1f - pulse) * 20f,
                     center = Offset(playerX + PLAYER_SIZE / 2f, playerY + PLAYER_SIZE / 2f),
                     style = Stroke(width = 4f),
+                )
+            }
+
+            if (phase == GamePhase.PAUSED) {
+                drawRect(
+                    color = Color(0x880A1222),
+                    size = size,
                 )
             }
         }
@@ -364,6 +498,23 @@ fun PixelDodgeGame() {
                 .padding(top = 24.dp),
         )
 
+        Button(
+            onClick = {
+                if (phase == GamePhase.PLAYING) phase = GamePhase.PAUSED
+                else if (phase == GamePhase.PAUSED) phase = GamePhase.PLAYING
+            },
+            enabled = phase != GamePhase.READY && phase != GamePhase.GAME_OVER,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF111B32),
+                contentColor = Color(0xFFEAF6FF),
+            ),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 18.dp, top = 18.dp),
+        ) {
+            Text(text = if (phase == GamePhase.PAUSED) "RESUME" else "PAUSE")
+        }
+
         if (shieldTime > 0f) {
             Text(
                 text = "SHIELD ${"%.1f".format(shieldTime)}s",
@@ -373,6 +524,30 @@ fun PixelDodgeGame() {
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 22.dp, end = 18.dp),
+            )
+        }
+
+        if (slowTime > 0f) {
+            Text(
+                text = "SLOW ${"%.1f".format(slowTime)}s",
+                color = Color(0xFFFFD559),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 52.dp, end = 18.dp),
+            )
+        }
+
+        if (magnetTime > 0f) {
+            Text(
+                text = "MAGNET ${"%.1f".format(magnetTime)}s",
+                color = Color(0xFF8EFEAC),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 82.dp, end = 18.dp),
             )
         }
 
@@ -390,12 +565,15 @@ fun PixelDodgeGame() {
                     ) {
                         Box(
                             modifier = Modifier
-                                .padding(horizontal = 26.dp, vertical = 20.dp)
-                                .background(Color.Transparent),
+                                .padding(horizontal = 26.dp, vertical = 20.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = if (phase == GamePhase.READY) "PIXEL DODGE\nTap to start" else "GAME OVER\nScore: $score\nBest: $bestScore",
+                                text = when (phase) {
+                                    GamePhase.READY -> "PIXEL DODGE\nTap or drag to start"
+                                    GamePhase.PAUSED -> "PAUSED\nTap resume or press button"
+                                    else -> "GAME OVER\nScore: $score\nBest: $bestScore\nCombo x$combo"
+                                },
                                 color = Color(0xFFEAF6FF),
                                 fontSize = 24.sp,
                                 fontWeight = FontWeight.ExtraBold,
@@ -404,8 +582,12 @@ fun PixelDodgeGame() {
 
                             Button(
                                 onClick = {
-                                    resetGame()
-                                    phase = GamePhase.PLAYING
+                                    if (phase == GamePhase.READY || phase == GamePhase.GAME_OVER) {
+                                        resetGame()
+                                        phase = GamePhase.PLAYING
+                                    } else if (phase == GamePhase.PAUSED) {
+                                        phase = GamePhase.PLAYING
+                                    }
                                 },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF7BE0FF),
@@ -414,7 +596,11 @@ fun PixelDodgeGame() {
                                 modifier = Modifier.align(Alignment.BottomCenter),
                             ) {
                                 Text(
-                                    text = if (phase == GamePhase.READY) "START" else "PLAY AGAIN",
+                                    text = when (phase) {
+                                        GamePhase.READY -> "START"
+                                        GamePhase.PAUSED -> "RESUME"
+                                        else -> "PLAY AGAIN"
+                                    },
                                     fontWeight = FontWeight.Bold,
                                 )
                             }
