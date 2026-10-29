@@ -1,0 +1,21 @@
+{
+  "name": "Pixel Dodge Android",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "17",
+      "jdkDistro": "ms"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup-android.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "redhat.java",
+        "vscjava.vscode-java-pack",
+        "google.android-studio",
+        "ms-androidstudio.android-studio"
+      ]
+    }
+  }
+}
